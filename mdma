@@ -1,0 +1,86 @@
+#!/usr/bin/env sh
+
+#Variables
+readonly LOOKUP=$1
+
+#Functions
+check_if_empty(){
+   if [ -z "$LOOKUP" ]; then
+      printf "Usage: mdma domain.tld\n"
+      exit 1
+   else
+      return 0
+   fi
+}
+get_host_lines(){
+   host ${LOOKUP} | grep address
+}
+get_ip_addr(){
+   get_host_lines | awk '{print $NF}'
+}
+rev_host_line(){
+   for i in $(get_ip_addr); do
+      host $i
+   done
+}
+mx_records_full(){
+   dig -t MX ${LOOKUP} +short | sort
+}
+dig_nserv(){
+   dig -t NS ${LOOKUP} +short
+}
+mail_dot_lookup(){
+   host mail.${LOOKUP} | grep address
+   if [ $? -ne 0 ] ; then
+      printf "There is no mail. record\n"
+   fi
+}
+parse_include() {
+   local include=$1
+   local level=$2
+
+   include_txt=$( dig +short -t txt ${include} | grep 'v=spf' )
+   printf "%$(( $level*2 ))s %s\n" "-" "${include_txt}"
+   for next_include in $( echo ${include_txt} | egrep -i -o 'include:([_a-z0-9\.-]+)' | cut -d: -f2- ) ; do
+      parse_include ${next_include} $(( $level + 1 ))
+   done
+}
+
+check_spf(){
+   DOM_SPF=$(dig +short -t txt ${LOOKUP} | grep 'v=spf')
+
+   if [ -z "${DOM_SPF}" ]; then
+      echo "This domain has no SPF, I smell a spam opportunity!"
+   fi
+
+   echo "${DOM_SPF}"
+   for include in $( echo ${DOM_SPF} | egrep -i -o 'include:([_a-z0-9\.-]+)' | cut -d: -f2- ) ; do
+      parse_include $include 1
+   done
+}
+
+# The main script
+main(){
+   check_if_empty
+   printf "LET OP!! Deze tool is niet geschikt voor IPv6!"
+   printf "\n";
+   printf "Host(s):\n";
+   get_host_lines
+   printf "\n";
+   printf "Reverse host(s):\n";
+   rev_host_line
+   printf "\n";
+   printf "MX Record(s):\n"
+   mx_records_full
+   printf "\n"
+   printf "Look for mail.${LOOKUP}:\n"
+   mail_dot_lookup
+   printf "\n"
+   printf "SPF:\n"
+   check_spf
+   printf "\n"
+   printf "DNS:\n"
+   dig_nserv
+   printf "\n"
+}
+main
