@@ -62,8 +62,6 @@ check_spf(){
 # The main script
 main(){
    check_if_empty
-   printf "LET OP!! Deze tool is niet geschikt voor IPv6!"
-   printf "\n";
    printf "Host(s):\n";
    get_host_lines
    printf "\n";
