@@ -25,6 +25,9 @@ rev_host_line(){
 }
 mx_records_full(){
    dig -t MX ${LOOKUP} +short | sort
+   if [ $? -ne 0 ] ; then
+      printf "There is no MX record(s)\n"
+   fi
 }
 dig_nserv(){
    dig -t NS ${LOOKUP} +short
