@@ -1,80 +1,121 @@
 #!/usr/bin/env sh
+#
+# mdma - Mail Domain Mail Analysis
+#
+# Queries and displays DNS and mail-related records for a given domain:
+#   - A/AAAA records (host addresses)
+#   - PTR records (reverse DNS of the A/AAAA addresses)
+#   - MX records (mail exchangers)
+#   - A record for mail.<domain>
+#   - SPF record and its nested includes (recursive)
+#   - NS records (authoritative name servers)
+#
+# Usage:
+#   mdma <domain.tld>
+#
+# Dependencies:
+#   host(1), dig(1), awk(1), grep(1), cut(1)
 
-#Variables
+# The domain to look up, supplied as the first argument.
 readonly LOOKUP=$1
 
-#Functions
-check_if_empty(){
+# check_if_empty -- exit with a usage message when no domain was supplied.
+check_if_empty() {
    if [ -z "$LOOKUP" ]; then
-      printf "Usage: mdma domain.tld\n"
+      printf "Usage: mdma domain.tld\n" >&2
       exit 1
-   else
-      return 0
    fi
 }
-get_host_lines(){
-   host ${LOOKUP} | grep address
+
+# get_host_lines -- print the raw "has address" lines returned by host(1).
+get_host_lines() {
+   host "${LOOKUP}" | grep address
 }
-get_ip_addr(){
+
+# get_ip_addr -- extract IP addresses from the host(1) output.
+get_ip_addr() {
    get_host_lines | awk '{print $NF}'
 }
-rev_host_line(){
+
+# rev_host_line -- perform a reverse DNS lookup for every IP address found.
+rev_host_line() {
    for i in $(get_ip_addr); do
-      host $i
+      host "$i"
    done
 }
-mx_records_full(){
-   dig -t MX ${LOOKUP} +short | sort
-   if [ $? -ne 0 ] ; then
-      printf "There is no MX record(s)\n"
+
+# mx_records_full -- print MX records for the domain, sorted by priority.
+#   Prints a notice to stderr when no MX records exist.
+mx_records_full() {
+   local mx_result
+   mx_result=$(dig -t MX "${LOOKUP}" +short)
+   if [ -z "$mx_result" ]; then
+      printf "There is no MX record(s)\n" >&2
+   else
+      printf "%s\n" "$mx_result" | sort
    fi
 }
-dig_nserv(){
-   dig -t NS ${LOOKUP} +short
+
+# dig_nserv -- print the authoritative name servers for the domain.
+dig_nserv() {
+   dig -t NS "${LOOKUP}" +short
 }
-mail_dot_lookup(){
-   host mail.${LOOKUP} | grep address
-   if [ $? -ne 0 ] ; then
-      printf "There is no mail. record\n"
+
+# mail_dot_lookup -- look up A/AAAA records for mail.<domain>.
+#   Prints a notice to stderr when no such record exists.
+mail_dot_lookup() {
+   host "mail.${LOOKUP}" | grep address
+   if [ $? -ne 0 ]; then
+      printf "There is no mail. record\n" >&2
    fi
 }
+
+# parse_include <domain> <level>
+#   Recursively print nested SPF include chains.
+#   <domain> is the SPF-sending domain to query.
+#   <level>  controls the indentation depth.
 parse_include() {
    local include=$1
    local level=$2
+   local include_txt
 
-   include_txt=$( dig +short -t txt ${include} | grep 'v=spf' )
-   printf "%$(( $level*2 ))s %s\n" "-" "${include_txt}"
-   for next_include in $( echo ${include_txt} | egrep -i -o 'include:([_a-z0-9\.-]+)' | cut -d: -f2- ) ; do
-      parse_include ${next_include} $(( $level + 1 ))
+   include_txt=$(dig +short -t txt "${include}" | grep 'v=spf')
+   printf "%$(( $level * 2 ))s %s\n" "-" "${include_txt}"
+   for next_include in $(printf "%s" "${include_txt}" | grep -E -i -o 'include:([_a-z0-9.-]+)' | cut -d: -f2-); do
+      parse_include "${next_include}" $(( $level + 1 ))
    done
 }
 
-check_spf(){
-   DOM_SPF=$(dig +short -t txt ${LOOKUP} | grep 'v=spf')
+# check_spf -- print the SPF record for the domain and recurse into includes.
+#   Prints a warning when no SPF record is present.
+check_spf() {
+   local dom_spf
+   dom_spf=$(dig +short -t txt "${LOOKUP}" | grep 'v=spf')
 
-   if [ -z "${DOM_SPF}" ]; then
-      echo "This domain has no SPF, I smell a spam opportunity!"
+   if [ -z "${dom_spf}" ]; then
+      printf "This domain has no SPF, I smell a spam opportunity!\n"
+      return
    fi
 
-   echo "${DOM_SPF}"
-   for include in $( echo ${DOM_SPF} | egrep -i -o 'include:([_a-z0-9\.-]+)' | cut -d: -f2- ) ; do
-      parse_include $include 1
+   printf "%s\n" "${dom_spf}"
+   for include in $(printf "%s" "${dom_spf}" | grep -E -i -o 'include:([_a-z0-9.-]+)' | cut -d: -f2-); do
+      parse_include "${include}" 1
    done
 }
 
-# The main script
-main(){
+# main -- entry point: validate input, then print all DNS/mail information.
+main() {
    check_if_empty
-   printf "Host(s):\n";
+   printf "Host(s):\n"
    get_host_lines
-   printf "\n";
-   printf "Reverse host(s):\n";
+   printf "\n"
+   printf "Reverse host(s):\n"
    rev_host_line
-   printf "\n";
+   printf "\n"
    printf "MX Record(s):\n"
    mx_records_full
    printf "\n"
-   printf "Look for mail.${LOOKUP}:\n"
+   printf "Look for mail.%s:\n" "${LOOKUP}"
    mail_dot_lookup
    printf "\n"
    printf "SPF:\n"
@@ -84,4 +125,5 @@ main(){
    dig_nserv
    printf "\n"
 }
+
 main
